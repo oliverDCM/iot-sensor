@@ -3,6 +3,31 @@ import pandas as pd
 import firebase_admin
 from firebase_admin import credentials, firestore
 import time
+import pytz
+
+BOGOTA = pytz.timezone("America/Bogota")
+
+def get_lecturas():
+    docs = db.collection("lecturas")\
+             .order_by("fecha", direction=firestore.Query.DESCENDING)\
+             .limit(100)\
+             .stream()
+    rows = []
+    for doc in docs:
+        d = doc.to_dict()
+        fecha_utc = d.get("fecha")
+        # Convertir UTC → hora Colombia
+        if fecha_utc:
+            fecha_local = fecha_utc.astimezone(BOGOTA)
+        else:
+            fecha_local = None
+        rows.append({
+            "sensor":    d.get("sensor"),
+            "estado":    d.get("estado"),
+            "deteccion": d.get("deteccion"),
+            "fecha":     fecha_local,
+        })
+    return pd.DataFrame(rows)
 
 st.set_page_config(
     page_title="Dashboard Sensor IR",
