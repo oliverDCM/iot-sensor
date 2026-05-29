@@ -1,0 +1,73 @@
+services:
+
+  emqx:
+    image: emqx:5.5.0
+    container_name: iot_emqx
+    ports:
+      - "1883:1883"
+      - "8083:8083"
+      - "18083:18083"
+    environment:
+      - EMQX_NODE__NAME=emqx@127.0.0.1
+      - EMQX_NODE__COOKIE=emqxsecretcookie
+      - EMQX_DASHBOARD__ADMIN_PASSWORD=admin123
+      - EMQX_AUTHORIZATION__NO_MATCH=allow
+    volumes:
+      - emqx_data:/opt/emqx/data
+    restart: always
+
+  db:
+    image: mariadb:10.11
+    container_name: iot_db
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: iot_db
+      MYSQL_USER: user_iot
+      MYSQL_PASSWORD: password_iot
+    volumes:
+      - ./db_init:/docker-entrypoint-initdb.d
+      - mariadb_data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    restart: always
+
+  adminer:
+    image: adminer
+    container_name: iot_adminer
+    ports:
+      - "8080:8080"
+    restart: always
+
+  ingestor:
+    build: ./ingestor
+    container_name: iot_ingestor
+    depends_on:
+      - emqx
+      - db
+    environment:
+      - MQTT_HOST=emqx
+      - MQTT_TOPIC=arquitectura/sensor/infrarrojo
+      - DB_HOST=db
+      - DB_NAME=iot_db
+      - DB_USER=user_iot
+      - DB_PASS=password_iot
+    restart: always
+
+  dashboard:
+    build: ./dashboard
+    container_name: iot_dashboard
+    ports:
+      - "8501:8501"
+    depends_on:
+      - emqx
+      - db
+    environment:
+      - DB_HOST=db
+      - DB_NAME=iot_db
+      - DB_USER=user_iot
+      - DB_PASS=password_iot
+    restart: always
+
+volumes:
+  mariadb_data:
+  emqx_data:
