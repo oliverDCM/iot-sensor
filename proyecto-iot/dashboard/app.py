@@ -4,6 +4,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import pytz
 from datetime import datetime
+import time
 
 BOGOTA = pytz.timezone("America/Bogota")
 
@@ -27,12 +28,9 @@ if not firebase_admin._apps:
     cred = credentials.Certificate(dict(st.secrets["firebase"]))
     firebase_admin.initialize_app(cred)
 
-# ── Caché real: la función no recibe el objeto db como argumento ──
-# Streamlit cachea basándose en los argumentos; al no pasar db,
-# el caché funciona correctamente entre reruns.
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)  # 30s de caché = máx 2 lecturas/minuto a Firestore
 def get_lecturas():
-    db = firestore.client()  # ← se obtiene aquí adentro, no como argumento
+    db = firestore.client()
     docs = (
         db.collection("lecturas")
         .order_by("fecha", direction=firestore.Query.DESCENDING)
@@ -52,9 +50,7 @@ def get_lecturas():
         })
     return pd.DataFrame(rows)
 
-# ── UI ──
 st.title("📡 Dashboard Sensor Infrarrojo")
-st.caption("Arquitectura de Software · Tiempo Real · Auto-refresh cada 60s")
 
 df = get_lecturas()
 
@@ -88,6 +84,9 @@ if not df.empty:
 else:
     st.info("Sin registros aún")
 
-# ── Auto-refresh correcto: no bloquea, no recarga el script completo ──
-st.caption(f"🕐 Próxima actualización en 60s · {datetime.now(BOGOTA).strftime('%H:%M:%S')}")
-st.rerun()  # ← sin sleep; el caché ttl=60 controla cuándo va a Firestore
+# Refresco controlado: espera 10s LUEGO recarga
+# El caché ttl=30 evita ir a Firestore en cada rerun
+ahora = datetime.now(BOGOTA).strftime('%H:%M:%S')
+st.caption(f"🕐 Actualizando en 10s · {ahora}")
+time.sleep(10)
+st.rerun()

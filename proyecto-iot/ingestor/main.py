@@ -2,24 +2,18 @@ import paho.mqtt.client as mqtt
 import mysql.connector
 import firebase_admin
 from firebase_admin import credentials, firestore
-import json
-import os
-import time
+import json, os, time, threading
 
-# ── Firebase init ──────────────────────────────────────
 cred = credentials.Certificate("/app/firebase-key.json")
 firebase_admin.initialize_app(cred)
 db_firebase = firestore.client()
 
-# ── MariaDB  ───
 def conectar_db():
     while True:
         try:
             conn = mysql.connector.connect(
-                host=os.getenv('DB_HOST'),
-                database=os.getenv('DB_NAME'),
-                user=os.getenv('DB_USER'),
-                password=os.getenv('DB_PASS'),
+                host=os.getenv('DB_HOST'), database=os.getenv('DB_NAME'),
+                user=os.getenv('DB_USER'), password=os.getenv('DB_PASS'),
                 autocommit=True
             )
             return conn
@@ -29,21 +23,20 @@ def conectar_db():
 
 db = conectar_db()
 topic = os.getenv('MQTT_TOPIC')
+ultimo_dato = {}  # guarda el último estado recibido
 
-def on_message(client, userdata, msg):
+def guardar(data):
     global db
     try:
-        data = json.loads(msg.payload.decode())
-
         if not db.is_connected():
             db = conectar_db()
         cursor = db.cursor()
-        sql = "INSERT INTO lecturas (sensor, deteccion, estado, timestamp_esp) VALUES (%s, %s, %s, %s)"
-        values = (data['sensor'], 1 if data['deteccion'] else 0, data['estado'], data['timestamp'])
-        cursor.execute(sql, values)
+        cursor.execute(
+            "INSERT INTO lecturas (sensor, deteccion, estado, timestamp_esp) VALUES (%s, %s, %s, %s)",
+            (data['sensor'], 1 if data['deteccion'] else 0, data['estado'], data['timestamp'])
+        )
         cursor.close()
 
-       
         db_firebase.collection("lecturas").add({
             "sensor":    data['sensor'],
             "deteccion": data['deteccion'],
@@ -51,11 +44,28 @@ def on_message(client, userdata, msg):
             "timestamp": data['timestamp'],
             "fecha":     firestore.SERVER_TIMESTAMP
         })
-
-        print(f"[OK] Guardado en MariaDB + Firebase: {data['estado']}")
-
+        print(f"[OK] {data['estado']} · {data['timestamp']}")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"[ERROR] {e}")
+
+def on_message(client, userdata, msg):
+    global ultimo_dato
+    try:
+        data = json.loads(msg.payload.decode())
+        ultimo_dato = data
+        guardar(data)
+    except Exception as e:
+        print(f"[MQTT ERROR] {e}")
+
+# Hilo que reenvía el último estado cada 30s si no llegan mensajes nuevos
+def heartbeat():
+    while True:
+        time.sleep(30)
+        if ultimo_dato:
+            print("[HEARTBEAT] Reenviando último estado...")
+            guardar(ultimo_dato)
+
+threading.Thread(target=heartbeat, daemon=True).start()
 
 client = mqtt.Client()
 client.on_message = on_message
